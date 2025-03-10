@@ -26,60 +26,56 @@ namespace CollinsTagger
             uint k1 = 0;
             uint streamLength = 0;
 
-            using (BinaryReader reader = new BinaryReader(new MemoryStream(data)))
+            // More efficient approach for small byte arrays - avoid MemoryStream overhead
+            if (data == null || data.Length == 0)
             {
-                byte[] chunk = reader.ReadBytes(4);
-                while (chunk.Length > 0)
+                return (int)seed;
+            }
+
+            streamLength = (uint)data.Length;
+            
+            // Process 4 bytes at a time directly from the array
+            int pos = 0;
+            while (pos <= data.Length - 4)
+            {
+                // Get four bytes from the input into an uint
+                k1 = BitConverter.ToUInt32(data, pos);
+                
+                // Bitmagic hash
+                k1 *= c1;
+                k1 = rotl32(k1, 15);
+                k1 *= c2;
+
+                h1 ^= k1;
+                h1 = rotl32(h1, 13);
+                h1 = h1 * 5 + 0xe6546b64;
+                
+                pos += 4;
+            }
+            
+            // Handle remaining bytes
+            if (pos < data.Length)
+            {
+                k1 = 0;
+                int remaining = data.Length - pos;
+                
+                switch (remaining)
                 {
-                    streamLength += (uint)chunk.Length;
-                    switch (chunk.Length)
-                    {
-                        case 4:
-                            /* Get four bytes from the input into an uint */
-                            k1 = (uint)
-                            (chunk[0]
-                            | chunk[1] << 8
-                            | chunk[2] << 16
-                            | chunk[3] << 24);
-
-                            /* bitmagic hash */
-                            k1 *= c1;
-                            k1 = rotl32(k1, 15);
-                            k1 *= c2;
-
-                            h1 ^= k1;
-                            h1 = rotl32(h1, 13);
-                            h1 = h1 * 5 + 0xe6546b64;
-                            break;
-                        case 3:
-                            k1 = (uint)
-                            (chunk[0]
-                            | chunk[1] << 8
-                            | chunk[2] << 16);
-                            k1 *= c1;
-                            k1 = rotl32(k1, 15);
-                            k1 *= c2;
-                            h1 ^= k1;
-                            break;
-                        case 2:
-                            k1 = (uint)
-                            (chunk[0]
-                            | chunk[1] << 8);
-                            k1 *= c1;
-                            k1 = rotl32(k1, 15);
-                            k1 *= c2;
-                            h1 ^= k1;
-                            break;
-                        case 1:
-                            k1 = (uint)(chunk[0]);
-                            k1 *= c1;
-                            k1 = rotl32(k1, 15);
-                            k1 *= c2;
-                            h1 ^= k1;
-                            break;
-                    }
-                    chunk = reader.ReadBytes(4);
+                    case 3:
+                        k1 = (uint)(data[pos + 2] << 16 | data[pos + 1] << 8 | data[pos]);
+                        break;
+                    case 2:
+                        k1 = (uint)(data[pos + 1] << 8 | data[pos]);
+                        break;
+                    case 1:
+                        k1 = (uint)data[pos];
+                        break;
                 }
+                
+                k1 *= c1;
+                k1 = rotl32(k1, 15);
+                k1 *= c2;
+                h1 ^= k1;
             }
             // finalization, magic chants to wrap it all up
             h1 ^= streamLength;

@@ -15,19 +15,33 @@ namespace CollinsTagger
     {
         static void Main(string[] args)
         {
-            Options options = ParseArguments(Regex.Split(string.Join(" ", args.Skip(1).ToArray()), @"\s+"));
+            try
+            {
+                if (args.Length == 0)
+                {
+                    Console.WriteLine("Usage: CollinsTagger [train|tag] [options]");
+                    return;
+                }
 
-            if ("train".Equals(args[0], StringComparison.OrdinalIgnoreCase))
-            {
-                Train(options);
+                Options options = ParseArguments(args.Length > 1 ? 
+                    args.Skip(1).ToArray() : Array.Empty<string>());
+
+                if ("train".Equals(args[0], StringComparison.OrdinalIgnoreCase))
+                {
+                    Train(options);
+                }
+                else if ("tag".Equals(args[0], StringComparison.OrdinalIgnoreCase))
+                {
+                    Tag(options);
+                }
+                else
+                {
+                    Console.WriteLine($"Unknown command: {args[0]}. Use 'train' or 'tag'.");
+                }
             }
-            else if ("tag".Equals(args[0], StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex)
             {
-                Tag(options);
-            }
-            else
-            {
-                throw new ArgumentException();
+                Console.WriteLine($"Error: {ex.Message}");
             }
         }
 
@@ -67,7 +81,7 @@ namespace CollinsTagger
 
             //key variables
             int numTags = tagMap.Count;
-            int numFeatures = options.UseFeatureHashing ? (2 << options.HashBits) : featureMap.Count;
+            int numFeatures = options.UseFeatureHashing ? (1 << options.HashBits) : featureMap.Count;
 
             Trainer trainer = new Trainer(numTags, numFeatures);
             int c = 0;
@@ -92,13 +106,21 @@ namespace CollinsTagger
             Instance cachedInstance = null;
             for (int i = 1; i < options.NumIterations; i++)
             {
-                Stream reader = new FileStream(cacheFile, FileMode.Open, FileAccess.Read);
+                using (Stream reader = new FileStream(cacheFile, FileMode.Open, FileAccess.Read))
                 using (GZipStream compressedReader = new GZipStream(reader, CompressionMode.Decompress))
                 { 
-                    while (reader.Position < reader.Length && (cachedInstance = binaryFormatter.Deserialize(compressedReader) as Instance) != null)
+                    try
                     {
-                        trainer.LearnFromOneInstance(cachedInstance.WordsWithFeatures, cachedInstance.LabelledTags);
-                        c++;
+                        while (reader.Position < reader.Length && (cachedInstance = binaryFormatter.Deserialize(compressedReader) as Instance) != null)
+                        {
+                            trainer.LearnFromOneInstance(cachedInstance.WordsWithFeatures, cachedInstance.LabelledTags);
+                            c++;
+                        }
+                    }
+                    catch (SerializationException ex)
+                    {
+                        Console.WriteLine($"Error deserializing data: {ex.Message}");
+                        break;
                     }
                 }
             }
@@ -178,7 +200,7 @@ namespace CollinsTagger
 
             //key variables
             int numTags = tagMap.Count;
-            int numFeatures = options.UseFeatureHashing ? (2 << options.HashBits) : featureMap.Count;
+            int numFeatures = options.UseFeatureHashing ? (1 << options.HashBits) : featureMap.Count;
 
             Model model = new Model()
             {
@@ -260,13 +282,16 @@ namespace CollinsTagger
             }
             for (int i = 0; i < numTags; i++)
             {
+                double precision = perTagModelCount[i] > 0 ? perTagCorrect[i] * 1.0 / perTagModelCount[i] : 0;
+                double recall = perTagCount[i] > 0 ? perTagCorrect[i] * 1.0 / perTagCount[i] : 0;
+                
                 Console.WriteLine(string.Join("\t", new object[] {
                         rTagMap[i],
                         perTagModelCount[i],
                         perTagCorrect[i],
                         perTagCount[i],
-                        perTagCorrect[i] * 1.0 / perTagModelCount[i],
-                        perTagCorrect[i] * 1.0 / perTagCount[i]
+                        precision,
+                        recall
                     }.Select(x => x.ToString()).ToArray()));
             }
             Console.WriteLine(string.Join("\t", new object[] {
@@ -284,27 +309,73 @@ namespace CollinsTagger
                 if ("--usefeaturehashing".Equals(args[i], StringComparison.OrdinalIgnoreCase))
                 {
                     options.UseFeatureHashing = true;
-                    options.HashBits = int.Parse(args[++i]);
+                    if (i + 1 < args.Length)
+                    {
+                        if (int.TryParse(args[++i], out int hashBits) && hashBits > 0 && hashBits < 31)
+                        {
+                            options.HashBits = hashBits;
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"HashBits must be a positive integer less than 31, got: {args[i]}", "HashBits");
+                        }
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Missing value for --usefeaturehashing parameter", "args");
+                    }
                 }
                 else if ("--basepath".Equals(args[i], StringComparison.OrdinalIgnoreCase))
                 {
-                    options.BasePath = args[++i];
+                    if (i + 1 < args.Length)
+                    {
+                        options.BasePath = args[++i];
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Missing value for --basepath parameter", "args");
+                    }
                 }
                 else if ("--numiterations".Equals(args[i], StringComparison.OrdinalIgnoreCase))
                 {
-                    options.NumIterations = int.Parse(args[++i]);
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out int numIter))
+                    {
+                        options.NumIterations = numIter;
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Invalid or missing value for --numiterations parameter", "args");
+                    }
                 }
                 else if ("--data".Equals(args[i], StringComparison.OrdinalIgnoreCase))
                 {
-                    options.DataFile = args[++i];
+                    if (i + 1 < args.Length)
+                    {
+                        options.DataFile = args[++i];
+                        if (!File.Exists(options.DataFile))
+                        {
+                            throw new FileNotFoundException($"Data file not found: {options.DataFile}");
+                        }
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Missing value for --data parameter", "args");
+                    }
                 }
                 else if ("--output".Equals(args[i], StringComparison.OrdinalIgnoreCase))
                 {
-                    options.Output = args[++i];
+                    if (i + 1 < args.Length)
+                    {
+                        options.Output = args[++i];
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Missing value for --output parameter", "args");
+                    }
                 }
                 else
                 {
-                    throw new ArgumentException(args[i]);
+                    throw new ArgumentException($"Unknown argument: {args[i]}", "args");
                 }
             }
             return options;
@@ -318,14 +389,14 @@ namespace CollinsTagger
         {
             using (StreamReader reader = new StreamReader(options.DataFile))
             {
-                string line = null;
+                string line;
                 List<int[]> features = new List<int[]>();
                 List<int> labelledTags = new List<int>();
 
                 while (!reader.EndOfStream)
                 {
                     //read one example
-                    while (!string.IsNullOrEmpty((line = reader.ReadLine())))
+                    while ((line = reader.ReadLine()) != null && !string.IsNullOrEmpty(line))
                     {
                         string[] tokens = Regex.Split(line, @"\s+");
 
@@ -336,7 +407,7 @@ namespace CollinsTagger
                             features.Add(tokens
                                 .Skip(1)
                                 .Select(x =>
-                                    MurMurHash3.Hash(Encoding.UTF8.GetBytes(x)) & ((2 << options.HashBits) - 1))
+                                    MurMurHash3.Hash(Encoding.UTF8.GetBytes(x)) & ((1 << options.HashBits) - 1))
                                 .Distinct()
                                 .ToArray());
 
@@ -351,9 +422,26 @@ namespace CollinsTagger
                                 .ToArray());
                         }
 
-                        //ugly hack : only affects reported PR stats not final output
-                        //if tag is unseen assume it to be O
-                        labelledTags.Add(tagMap.ContainsKey(tokens[0]) ? tagMap[tokens[0]] : tagMap["O"]);
+                        //if tag is unseen, try to use "O" tag if it exists, otherwise use the first tag
+                        int tagId;
+                        if (tagMap.ContainsKey(tokens[0]))
+                        {
+                            tagId = tagMap[tokens[0]];
+                        }
+                        else if (tagMap.ContainsKey("O"))
+                        {
+                            tagId = tagMap["O"];
+                        }
+                        else if (tagMap.Count > 0)
+                        {
+                            tagId = tagMap.Values.First();
+                        }
+                        else
+                        {
+                            // This should never happen as we already populated tagMap
+                            tagId = 0;
+                        }
+                        labelledTags.Add(tagId);
                     }
 
                     //skip the sequence if its too long
@@ -382,11 +470,70 @@ namespace CollinsTagger
 
     class Options
     {
-        public string BasePath { get; set; }
+        private string _basePath;
+        private int _hashBits;
+        private string _dataFile;
+        private int _numIterations = 1; // Default to 1 iteration
+        private string _output;
+
+        public string BasePath 
+        { 
+            get => _basePath ?? Environment.CurrentDirectory;
+            set => _basePath = value; 
+        }
+        
         public bool UseFeatureHashing { get; set; }
-        public int HashBits { get; set; }
-        public string DataFile { get; set; }
-        public int NumIterations { get; set; }
-        public string Output { get; set; }
+        
+        public int HashBits 
+        { 
+            get => _hashBits;
+            set 
+            {
+                if (value <= 0 || value >= 31)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(HashBits), "Hash bits must be between 1 and 30");
+                }
+                _hashBits = value;
+            }
+        }
+        
+        public string DataFile 
+        { 
+            get => _dataFile;
+            set 
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    throw new ArgumentException("Data file path cannot be empty", nameof(DataFile));
+                }
+                _dataFile = value;
+            }
+        }
+        
+        public int NumIterations 
+        { 
+            get => _numIterations;
+            set 
+            {
+                if (value <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(NumIterations), "Number of iterations must be positive");
+                }
+                _numIterations = value;
+            }
+        }
+        
+        public string Output 
+        { 
+            get => _output;
+            set 
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    throw new ArgumentException("Output path cannot be empty", nameof(Output));
+                }
+                _output = value;
+            }
+        }
     }
 }

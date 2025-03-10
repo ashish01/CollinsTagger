@@ -22,6 +22,12 @@ namespace CollinsTagger
         {
             int numWords = wordsWithActiveFeatures.Length;
 
+            // Check if we have a valid sequence and tags to process
+            if (numWords == 0 || numTags == 0)
+            {
+                return;
+            }
+
             //find the best tag for first word
             //this score is only dependent on the word features
             //Begining of sentence / end of sentence is encoded as features
@@ -78,22 +84,26 @@ namespace CollinsTagger
                 }
             }
 
-            //backtrack back pointers
-            float lastScore = lattice[numWords - 1, 0];
-            int lastTag = 0;
-            for (int t = 1; t < numTags; t++)
+            // Only backtrack if we have words to process
+            if (numWords > 0 && numTags > 0)
             {
-                if (lattice[numWords - 1, t] > lastScore)
+                //backtrack back pointers
+                float lastScore = lattice[numWords - 1, 0];
+                int lastTag = 0;
+                for (int t = 1; t < numTags; t++)
                 {
-                    lastScore = lattice[numWords - 1, t];
-                    lastTag = t;
+                    if (lattice[numWords - 1, t] > lastScore)
+                    {
+                        lastScore = lattice[numWords - 1, t];
+                        lastTag = t;
+                    }
                 }
-            }
 
-            decodedTags[numWords - 1] = lastTag;
-            for (int w = numWords - 1; w > 0; w--)
-            {
-                decodedTags[w - 1] = backPointers[w, decodedTags[w]];
+                decodedTags[numWords - 1] = lastTag;
+                for (int w = numWords - 1; w > 0; w--)
+                {
+                    decodedTags[w - 1] = backPointers[w, decodedTags[w]];
+                }
             }
         }
     }
